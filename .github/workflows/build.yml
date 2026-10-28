@@ -1,8 +1,7 @@
 name: Build Android APK
 # Works in 2 ways:
 #  A) project files are in the repo root (project.godot visible), or
-#  B) you uploaded the .zip file to the repo root -> this workflow unzips it automatically.
-# If neither exists yet (e.g. right after creating this file), the run ends quietly (no red X).
+#  B) you uploaded only the .zip file to the repo root -> this workflow unzips it automatically.
 on:
   push:
   workflow_dispatch:
@@ -15,71 +14,45 @@ jobs:
       image: barichello/godot-ci:4.3
     steps:
       - uses: actions/checkout@v4
-
       - name: Find project (unzip if needed)
         run: |
-          echo "== files in repo root =="; ls -la
+          set -e
           if [ -f project.godot ]; then
             P=.
           else
             Z=$(ls ./*.zip 2>/dev/null | head -n 1 || true)
-            if [ -z "$Z" ]; then
-              echo "::notice::No project.godot and no .zip in repo root yet. Upload dinajpur-jhenaidah-game.zip, then it will build."
-              echo "SKIP=true" >> "$GITHUB_ENV"
-              exit 0
-            fi
-            echo "Found zip: $Z"
+            if [ -z "$Z" ]; then echo "::error::No project.godot and no .zip file in the repo root"; exit 1; fi
             command -v unzip >/dev/null || (apt-get update -qq && apt-get install -y -qq unzip)
             mkdir -p _unzipped
             unzip -o -q "$Z" -d _unzipped
             F=$(find _unzipped -name project.godot -not -path '*/.godot/*' | head -n 1)
-            if [ -z "$F" ]; then
-              echo "::error::project.godot not found inside the zip. Zip must contain project.godot."
-              find _unzipped | head -n 40
-              exit 1
-            fi
+            if [ -z "$F" ]; then echo "::error::project.godot not found inside the zip"; exit 1; fi
             P=$(dirname "$F")
           fi
           echo "Project dir: $P"
           echo "PROJECT_DIR=$P" >> "$GITHUB_ENV"
-          ls -la "$P"
-
-      - name: Setup Godot templates + Android signing
-        if: env.SKIP != 'true'
+      - name: Setup Godot + Android signing
         run: |
-          echo "GODOT_VERSION=$GODOT_VERSION"; godot --version || true
-          mkdir -p ~/.local/share/godot/export_templates ~/.config/godot
-          if [ ! -d ~/.local/share/godot/export_templates/${GODOT_VERSION}.stable ]; then
-            cp -r /root/.local/share/godot/export_templates/${GODOT_VERSION}.stable ~/.local/share/godot/export_templates/ || true
-          fi
-          ls ~/.local/share/godot/export_templates/ || true
-          keytool -keyalg RSA -genkeypair -alias androiddebugkey -keypass android -keystore /root/debug.keystore -storepass android -dname "CN=Android Debug,O=Android,C=US" -validity 9999 -deststoretype pkcs12
+          mkdir -v -p ~/.local/share/godot/export_templates/ ~/.config/godot/
+          mv /root/.local/share/godot/export_templates/${GODOT_VERSION}.stable ~/.local/share/godot/export_templates/${GODOT_VERSION}.stable || true
+          keytool -keyalg RSA -genkeypair -alias androiddebugkey -keypass android -keystore debug.keystore -storepass android -dname "CN=Android Debug,O=Android,C=US" -validity 9999 -deststoretype pkcs12
+          mv debug.keystore /root/debug.keystore
           printf '[gd_resource type="EditorSettings" format=3]\n\n[resource]\nexport/android/android_sdk_path = "/usr/lib/android-sdk"\nexport/android/debug_keystore = "/root/debug.keystore"\nexport/android/debug_keystore_user = "androiddebugkey"\nexport/android/debug_keystore_pass = "android"\nexport/android/force_system_user = false\nexport/android/shutdown_adb_on_exit = true\n' > ~/.config/godot/editor_settings-4.3.tres
           cp ~/.config/godot/editor_settings-4.3.tres ~/.config/godot/editor_settings-4.tres
-
       - name: Import assets (glb, wav)
-        if: env.SKIP != 'true'
         run: |
           cd "$PROJECT_DIR"
           godot --headless --import || true
-
       - name: Export APK
-        if: env.SKIP != 'true'
         run: |
           mkdir -p "$GITHUB_WORKSPACE/build"
           cd "$PROJECT_DIR"
-          godot --headless --verbose --export-debug "Android" "$GITHUB_WORKSPACE/build/dinajpur-jhenaidah.apk" 2>&1 | tail -n 80
-          ls -la "$GITHUB_WORKSPACE/build"
-          test -f "$GITHUB_WORKSPACE/build/dinajpur-jhenaidah.apk" || { echo "::error::APK was not created - see log above (search for ERROR)"; exit 1; }
-
+          godot --headless --verbose --export-debug "Android" "$GITHUB_WORKSPACE/build/dinajpur-jhenaidah.apk"
       - uses: actions/upload-artifact@v4
-        if: env.SKIP != 'true'
         with:
           name: android-apk
           path: build/*.apk
-
-      - name: Publish APK as a Release
-        if: env.SKIP != 'true'
+      - name: Publish APK as a Release (easy download on phone)
         uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ github.run_number }}
