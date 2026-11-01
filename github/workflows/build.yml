@@ -94,6 +94,7 @@ jobs:
         run: |
           cd "$PROJECT_DIR"
           godot --headless --import > "$GITHUB_WORKSPACE/import.log" 2>&1 || true
+          godot --headless --import >> "$GITHUB_WORKSPACE/import.log" 2>&1 || true
           tail -n 25 "$GITHUB_WORKSPACE/import.log"
           grep -iE "parse error|script error" "$GITHUB_WORKSPACE/import.log" | head -n 5 | while read -r l; do echo "::warning::${l:0:300}"; done || true
 
